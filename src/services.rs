@@ -1,5 +1,7 @@
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, TimeZone, Utc};
+use tokio::time::{interval, Duration};
+use sqlx::{PgPool, Row};
 
 // Defines the Node struct, which represents a Lightning Network node retrieved from the external API.
 // The server only extracts the relevant fields: public key, alias, capacity, and first seen timestamp.
@@ -8,9 +10,20 @@ pub struct Node {
     #[serde(rename = "publicKey")]
     public_key: String,
     alias: String,
-    capacity: u64,
+    capacity: i64,
     #[serde(rename = "firstSeen")]
     first_seen: i64,
+}
+
+// Represents a Node for exporting data, with all fields as Strings to match the database structure (which stores them as text)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NodeExport {
+    #[serde(rename = "publicKey")]
+    public_key: String,
+    alias: String,
+    capacity: String,
+    #[serde(rename = "firstSeen")]
+    first_seen: String,
 }
 
 impl Node {
@@ -45,4 +58,61 @@ pub async fn get_nodes() -> Result<Vec<Node>, reqwest::Error> {
     .await?;
 
     Ok(nodes)
+}
+
+// Periodically imports nodes from the external API into the PostgreSQL database
+pub async fn import_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
+    // Create an interval that ticks every 600 seconds (10 minutes)
+    let mut interval = interval(Duration::from_secs(10));
+
+    // Loop to continuously import data from the external API
+    loop{
+        interval.tick().await;
+        match get_nodes().await {
+            Ok(nodes) => {
+                // Insert each node, skipping duplicates based on public_key
+                for node in nodes {
+                    sqlx::query(
+                    "INSERT INTO node (public_key, alias, capacity, first_seen)
+                    VALUES ($1, $2, $3, $4) ON CONFLICT (public_key) DO NOTHING;"
+                    )
+                    .bind(node.public_key())
+                    .bind(node.alias())
+                    .bind(node.capacity())
+                    .bind(node.first_seen())
+                    .execute(&pool)
+                    .await?;
+                }
+            }
+            Err(e) => eprintln!("Error: {:?}", e),
+        }
+    }
+}
+
+// Exports all nodes from the database by querying and printing them as pretty JSON
+pub async fn export_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error>>{
+    let rows = sqlx::query(
+    "SELECT public_key, alias, capacity, first_seen FROM node"
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut nodes = Vec::new();
+
+    // Convert each database row into a NodeExport struct
+    for row in rows {
+        let node = NodeExport {
+            public_key: row.try_get("public_key")?,
+            alias: row.try_get("alias")?,
+            capacity: row.try_get("capacity")?,
+            first_seen: row.try_get("first_seen")?,
+        };
+        nodes.push(node);
+    }
+
+    // Serialize the vector of nodes to a pretty JSON string
+    let json = serde_json::to_string_pretty(&nodes)?;
+    println!("{}", json);
+
+    Ok(())
 }
