@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, TimeZone, Utc};
 use tokio::time::{interval, Duration};
 use sqlx::{PgPool, Row};
+use actix_web::{web, Responder, HttpResponse};
 
 // Defines the Node struct, which represents a Lightning Network node retrieved from the external API.
 // The server only extracts the relevant fields: public key, alias, capacity, and first seen timestamp.
@@ -72,6 +73,17 @@ pub async fn import_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error 
             Ok(nodes) => {
                 // Insert each node, skipping duplicates based on public_key
                 for node in nodes {
+                    // Create node table if it does not already exist
+                    sqlx::query(
+                        "CREATE TABLE IF NOT EXISTS node (
+                            public_key VARCHAR(66) PRIMARY KEY,
+                            alias TEXT,
+                            capacity TEXT,
+                            first_seen VARCHAR(20)
+                        );"
+                    )
+                    .execute(&pool)
+                    .await?;
                     sqlx::query(
                     "INSERT INTO node (public_key, alias, capacity, first_seen)
                     VALUES ($1, $2, $3, $4) ON CONFLICT (public_key) DO NOTHING;"
@@ -89,8 +101,8 @@ pub async fn import_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error 
     }
 }
 
-// Exports all nodes from the database by querying and printing them as pretty JSON
-pub async fn export_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error>>{
+// Exports all nodes from the database by querying and returning them as pretty JSON
+pub async fn export_nodes(pool: PgPool) -> Result<String, Box<dyn std::error::Error>>{
     let rows = sqlx::query(
     "SELECT public_key, alias, capacity, first_seen FROM node"
     )
@@ -112,7 +124,15 @@ pub async fn export_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error>
 
     // Serialize the vector of nodes to a pretty JSON string
     let json = serde_json::to_string_pretty(&nodes)?;
-    println!("{}", json);
 
-    Ok(())
+    Ok(json)
+}
+
+// Actix-Web handler for GET /nodes
+// Calls export_nodes and returns the result as an HTTP response
+pub async fn export_handler(pool: web::Data<PgPool>) -> impl Responder {
+    match export_nodes(pool.get_ref().clone()).await {
+        Ok(conteudo) => HttpResponse::Ok().body(conteudo),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Error: {:?}", e)),
+    }
 }
