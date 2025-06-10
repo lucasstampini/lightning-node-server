@@ -9,12 +9,12 @@
 - `reqwest` = "0.12" (features: `json`)
 - `tokio` = "1.38" (features: `full`)
 - `serde` = "1.0" (features: `derive`)
-- `actix` = "0.13.5`
-- `actix-web` = "4.11.0`
-- `dotenv` = "0.15.0`
-- `sqlx` = "0.8.6` (features: `runtime-async-std-native-tls`, `postgres`)
-- `chrono` = "0.4.41`
-- `serde_json` = "1.0.140`
+- `actix` = "0.13.5"
+- `actix-web` = "4.11.0"
+- `dotenv` = "0.15.0"
+- `sqlx` = "0.8.6" (features: `runtime-async-std-native-tls`, `postgres`)
+- `chrono` = "0.4.41"
+- `serde_json` = "1.0.140"
 
 ### Development Tools
 - **IDE**: Visual Studio Code 1.100
