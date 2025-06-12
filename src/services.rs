@@ -64,7 +64,7 @@ pub async fn get_nodes() -> Result<Vec<Node>, reqwest::Error> {
 // Periodically imports nodes from the external API into the PostgreSQL database
 pub async fn import_nodes(pool: PgPool) -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
     // Create an interval that ticks every 600 seconds (10 minutes)
-    let mut interval = interval(Duration::from_secs(10));
+    let mut interval = interval(Duration::from_secs(600));
 
     // Loop to continuously import data from the external API
     loop{
@@ -128,11 +128,59 @@ pub async fn export_nodes(pool: PgPool) -> Result<String, Box<dyn std::error::Er
     Ok(json)
 }
 
+pub async fn export_nodes_capacity(pool: PgPool) -> Result<String, Box<dyn std::error::Error>>{
+    let rows = sqlx::query(
+    "SELECT public_key, alias, capacity, first_seen FROM node order by capacity::float"
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut nodes = Vec::new();
+
+    // Convert each database row into a NodeExport struct
+    for row in rows {
+        let node = NodeExport {
+            public_key: row.try_get("public_key")?,
+            alias: row.try_get("alias")?,
+            capacity: row.try_get("capacity")?,
+            first_seen: row.try_get("first_seen")?,
+        };
+        nodes.push(node);
+    }
+
+    // Serialize the vector of nodes to a pretty JSON string
+    let json = serde_json::to_string_pretty(&nodes)?;
+
+    Ok(json)
+}
+
+#[derive(Deserialize)]
+pub struct Filter {
+    order: Option<String>,
+}
+
 // Actix-Web handler for GET /nodes
 // Calls export_nodes and returns the result as an HTTP response
-pub async fn export_handler(pool: web::Data<PgPool>) -> impl Responder {
-    match export_nodes(pool.get_ref().clone()).await {
-        Ok(conteudo) => HttpResponse::Ok().body(conteudo),
-        Err(e) => HttpResponse::InternalServerError().body(format!("Error: {:?}", e)),
+pub async fn export_handler(pool: web::Data<PgPool>, order: web::Query<Filter>) -> impl Responder {
+
+    match &order.order {
+        Some(x) =>  if x == "capacity" {
+                        match export_nodes_capacity(pool.get_ref().clone()).await {
+                            Ok(conteudo) => HttpResponse::Ok().body(conteudo),
+                            Err(e) => HttpResponse::InternalServerError().body(format!("Error: {:?}", e)),
+                            }
+                    }
+                    else{
+                        match export_nodes(pool.get_ref().clone()).await {
+                            Ok(conteudo) => HttpResponse::Ok().body(conteudo),
+                            Err(e) => HttpResponse::InternalServerError().body(format!("Error: {:?}", e)),
+                            }
+                    }
+        None => match export_nodes(pool.get_ref().clone()).await {
+                            Ok(conteudo) => HttpResponse::Ok().body(conteudo),
+                            Err(e) => HttpResponse::InternalServerError().body(format!("Error: {:?}", e)),
+                            }
     }
+
+    
 }
